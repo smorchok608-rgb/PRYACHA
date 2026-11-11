@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Симулятор вязания</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f6efe4;--panel:#fffaf1;--ink:#3b2f27;--muted:#8a7767;--line:#e2d4bf;--needle:#b9a07a;--needle2:#8c7352}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#241e19;--panel:#2f2720;--ink:#f1e6d6;--muted:#a99884;--line:#4a3e33;--needle:#d6bd94;--needle2:#a98f66}}
+:root[data-theme="dark"]{--bg:#241e19;--panel:#2f2720;--ink:#f1e6d6;--muted:#a99884;--line:#4a3e33;--needle:#d6bd94;--needle2:#a98f66}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,"Times New Roman",serif;padding:14px}
+h1{font-size:22px;margin:0 0 10px;text-align:center}
+.bar{display:flex;flex-wrap:wrap;gap:8px 10px;justify-content:center;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px;max-width:820px;margin:0 auto 10px;font-size:14px}
+.yarn{width:62px;border:3px solid transparent;border-radius:14px;background:none;cursor:pointer;padding:3px;color:var(--ink);font:12px Georgia,serif}
+.yarn.on{border-color:var(--ink)}
+.ball{display:block;width:40px;height:40px;border-radius:50%;margin:0 auto 3px;box-shadow:inset -6px -6px 12px rgba(0,0,0,.25),inset 4px 4px 8px rgba(255,255,255,.35);background-image:repeating-linear-gradient(45deg,rgba(0,0,0,.14) 0 2px,transparent 2px 7px)}
+button.b,select{font:14px Georgia,serif;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:7px 11px;cursor:pointer}
+button.b.on{background:var(--ink);color:var(--bg)}
+button.main{background:var(--ink);color:var(--bg);font-weight:bold}
+.lbl{color:var(--muted)}
+.wrap{max-width:820px;margin:0 auto;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;max-height:58vh}
+canvas{display:block;margin:0 auto}
+.hint{text-align:center;color:var(--muted);font-size:13px;margin:8px auto;max-width:820px}
+</style>
+</head>
+<body>
+<h1>🧶 Симулятор вязания</h1>
+<div class="bar" id="yarns"></div>
+<div class="bar"><span class="lbl">Петля:</span><span id="types"></span>
+  <label><span class="lbl">Узор</span> <select id="pat">
+  <option value="man">Вручную</option><option value="rib">Резинка 1×1</option><option value="str">Полосы (4 цвета)</option>
+  <option value="chk">Шахматка</option><option value="rb">Радуга</option><option value="lace">Ажур</option></select></label>
+</div>
+<div class="bar">
+  <button class="b main" id="knit">Вязать петлю</button>
+  <button class="b" id="row">Ряд</button>
+  <button class="b" id="row5">5 рядов</button>
+  <button class="b" id="undo">Распустить петлю</button>
+  <button class="b" id="unrow">Распустить ряд</button>
+  <button class="b" id="clear">Заново</button>
+</div>
+<div class="bar">
+  <label><span class="lbl">Петель</span> <select id="w"><option>8</option><option>12</option><option selected>16</option><option>20</option><option>24</option><option>32</option></select></label>
+  <label><span class="lbl">Размер</span> <input type="range" id="zoom" min="18" max="44" value="28"></label>
+  <label><input type="checkbox" id="serp"> туда-обратно</label>
+  <label><input type="checkbox" id="snd" checked> звук</label>
+</div>
+<div class="wrap"><canvas id="c"></canvas></div>
+<div class="hint">Пробел — вязать (можно зажать), Backspace — распустить, 1–4 — пряжа. Клик или протяжка мышью по готовым петлям перекрашивает их выбранной пряжей и петлёй; «✕ Пропуск» стирает петлю (дырка).</div>
+<script>
+const YARNS=[{n:"Жёлтая",c:"#f2c230"},{n:"Красная",c:"#d8382f"},{n:"Синяя",c:"#2f6fd0"},{n:"Зелёная",c:"#3d9a4a"}];
+const TYPES=["V Лицевая","— Изнаночная","○ Накид","✕ Пропуск"];
+let cur=0,type=0,W=16,n=0,cells=[],bob=0,CW=28,CH=22,serp=false,pat="man",down=false;
+const MX=40,TOP=110;
+const cv=document.getElementById("c"),g=cv.getContext("2d"),$=id=>document.getElementById(id);
+const yb=$("yarns"),tb=$("types");
+YARNS.forEach((y,i)=>{const b=document.createElement("button");b.className="yarn"+(i==0?" on":"");
+b.innerHTML='<span class="ball" style="background-color:'+y.c+'"></span>'+y.n;
+b.onclick=()=>{cur=i;[...yb.children].forEach((e,j)=>e.classList.toggle("on",j==i));draw()};yb.appendChild(b)});
+TYPES.forEach((t,i)=>{const b=document.createElement("button");b.className="b"+(i==0?" on":"");b.textContent=t;
+b.onclick=()=>{type=i;[...tb.children].forEach((e,j)=>e.classList.toggle("on",j==i))};tb.appendChild(b)});
+function shade(h,k){const v=parseInt(h.slice(1),16);const f=x=>Math.max(0,Math.min(255,Math.round(x+k)));return "rgb("+f(v>>16)+","+f(v>>8&255)+","+f(v&255)+")"}
+function cssv(k){return getComputedStyle(document.documentElement).getPropertyValue(k).trim()}
+function grad(col,h){const gr=g.createLinearGradient(-6,-h,6,h);gr.addColorStop(0,shade(col,45));gr.addColorStop(.5,col);gr.addColorStop(1,shade(col,-45));return gr}
+function stitch(x,y,cell){
+  if(!cell){g.save();g.setLineDash([3,4]);g.strokeStyle=cssv("--line");g.strokeRect(x+3,y+3,CW-6,CH-6);g.restore();return}
+  const col=YARNS[cell.c].c;
+  if(cell.t==0){for(const s of [-1,1]){g.save();g.translate(x+CW/2+s*CW*.2,y+CH/2);g.rotate(-s*.55);
+    g.fillStyle=grad(col,CH*.5);g.strokeStyle=shade(col,-70);g.lineWidth=1;
+    g.beginPath();g.ellipse(0,0,CW*.2,CH*.62,0,0,7);g.fill();g.stroke();
+    g.strokeStyle=shade(col,55);g.globalAlpha=.6;g.beginPath();g.moveTo(0,-CH*.45);g.lineTo(0,CH*.45);g.stroke();g.restore()}}
+  else if(cell.t==1){for(const s of [-1,1]){g.save();g.translate(x+CW/2,y+CH/2+s*CH*.24);g.rotate(s*.1);
+    g.fillStyle=grad(col,CH*.3);g.strokeStyle=shade(col,-70);g.lineWidth=1;
+    g.beginPath();g.ellipse(0,0,CW*.42,CH*.27,0,0,7);g.fill();g.stroke();g.restore()}}
+  else{g.save();g.translate(x+CW/2,y+CH/2);g.lineWidth=6;g.strokeStyle=shade(col,-60);
+    g.beginPath();g.ellipse(0,0,CW*.32,CH*.36,0,0,7);g.stroke();g.lineWidth=3.5;g.strokeStyle=col;
+    g.beginPath();g.ellipse(0,0,CW*.32,CH*.36,0,0,7);g.stroke();g.restore()}
+}
+const colAt=(r,p)=>(serp&&r%2)?W-1-p:p;
+function make(r,c){
+  if(type==3)return null;
+  if(pat=="rib")return{t:c%2?1:0,c:cur};
+  if(pat=="str")return{t:type,c:r%4};
+  if(pat=="chk")return{t:type,c:(r+c)%2?(cur+1)%4:cur};
+  if(pat=="rb")return{t:type,c:(r+c)%4};
+  if(pat=="lace")return{t:(c%2&&r%2==0)?2:type,c:cur};
+  return{t:type,c:cur};
+}
+function draw(){
+  CH=Math.round(CW*.8);
+  const r0=Math.floor(n/W),p=n%W,rows=Math.max(1,Math.ceil(n/W));
+  const pw=W*CW+MX*2,ph=Math.max(380,TOP+rows*CH+40),d=window.devicePixelRatio||1;
+  cv.width=pw*d;cv.height=ph*d;cv.style.width=pw+"px";cv.style.height=ph+"px";g.setTransform(d,0,0,d,0,0);
+  for(let r=0;r<rows;r++){const y=TOP+(rows-1-r)*CH;
+    for(let c=0;c<W;c++){const ord=serp&&r%2?W-1-c:c;if(r*W+ord>=n)continue;
+      stitch(MX+c*CW,y,cells[r*W+c])}}
+  g.lineCap="round";
+  for(let i=0;i<W;i++){const ord=serp&&r0%2?W-1-i:i;let cell=null,have=false;
+    if(ord<p){cell=cells[r0*W+i];have=true}else if(r0>0){cell=cells[(r0-1)*W+i];have=true}
+    const c=have&&cell?YARNS[cell.c].c:"#cdbb9b",x=MX+i*CW+CW/2;
+    g.strokeStyle=shade(c,-60);g.lineWidth=7;g.beginPath();g.ellipse(x,TOP-14,CW*.34,13,0,0,7);g.stroke();
+    g.strokeStyle=c;g.lineWidth=4.5;g.beginPath();g.ellipse(x,TOP-14,CW*.34,13,0,0,7);g.stroke()}
+  g.strokeStyle=cssv("--needle2");g.lineWidth=7;g.beginPath();g.moveTo(MX-24,TOP-20);g.lineTo(pw-MX+24,TOP-20);g.stroke();
+  g.strokeStyle=cssv("--needle");g.lineWidth=4;g.beginPath();g.moveTo(MX-24,TOP-21);g.lineTo(pw-MX+24,TOP-21);g.stroke();
+  g.fillStyle=cssv("--needle2");g.beginPath();g.arc(MX-26,TOP-20,7,0,7);g.fill();g.beginPath();g.arc(pw-MX+26,TOP-20,7,0,7);g.fill();
+  const rev=serp&&r0%2,tx=MX+colAt(r0,p>=W?W-1:p)*CW+CW/2,ty=TOP-20-bob,dir=rev?-1:1;
+  g.strokeStyle=cssv("--needle2");g.lineWidth=7;g.beginPath();g.moveTo(tx+150*dir,ty-95);g.lineTo(tx,ty);g.stroke();
+  g.strokeStyle=cssv("--needle");g.lineWidth=4;g.beginPath();g.moveTo(tx+150*dir,ty-95);g.lineTo(tx,ty);g.stroke();
+  g.fillStyle=cssv("--needle2");g.beginPath();g.arc(tx+152*dir,ty-97,8,0,7);g.fill();
+  const sx=rev?12:pw-12;g.strokeStyle=YARNS[cur].c;g.lineWidth=4;g.beginPath();g.moveTo(sx,8);
+  g.quadraticCurveTo(sx+(rev?30:-30),70,tx+10*dir,ty-8);g.stroke();
+  g.fillStyle=YARNS[cur].c;g.beginPath();g.arc(sx,8,9,0,7);g.fill();
+}
+let ac;function tick(){if(!$("snd").checked)return;try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+  const o=ac.createOscillator(),v=ac.createGain();o.type="triangle";o.frequency.value=650+Math.random()*250;
+  v.gain.setValueAtTime(.05,ac.currentTime);v.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+.07);
+  o.connect(v);v.connect(ac.destination);o.start();o.stop(ac.currentTime+.08)}catch(e){}}
+function knit1(){const r=Math.floor(n/W),c=colAt(r,n%W);cells[r*W+c]=make(r,c);n++}
+function knit(){knit1();bob=14;tick();draw();anim()}
+let raf=0;function anim(){cancelAnimationFrame(raf);(function f(){if(bob>0){bob=Math.max(0,bob-1.2);draw();raf=requestAnimationFrame(f)}})()}
+function undo1(){if(!n)return;n--;const r=Math.floor(n/W);cells[r*W+colAt(r,n%W)]=undefined}
+function hold(el,fn){let t,iv;const stop=()=>{clearTimeout(t);clearInterval(iv)};
+  el.addEventListener("pointerdown",e=>{e.preventDefault();fn();t=setTimeout(()=>iv=setInterval(fn,110),350)});
+  ["pointerup","pointerleave","pointercancel"].forEach(ev=>el.addEventListener(ev,stop))}
+hold($("knit"),knit);
+function fill(k){let m=k*W-(n%W||0);if(n%W==0)m=k*W;else m=(k-1)*W+(W-n%W);for(let i=0;i<m;i++)knit1();bob=14;tick();draw();anim()}
+$("row").onclick=()=>fill(1);$("row5").onclick=()=>fill(5);
+$("undo").onclick=()=>{undo1();draw()};
+$("unrow").onclick=()=>{let m=n%W||Math.min(W,n);while(m--)undo1();draw()};
+$("clear").onclick=()=>{n=0;cells=[];draw()};
+$("w").onchange=e=>{W=+e.target.value;n=0;cells=[];draw()};
+$("zoom").oninput=e=>{CW=+e.target.value;draw()};
+$("serp").onchange=e=>{serp=e.target.checked;n=0;cells=[];draw()};
+$("pat").onchange=e=>{pat=e.target.value};
+document.addEventListener("keydown",e=>{if(["SELECT","INPUT"].includes(e.target.tagName))return;
+  if(e.code=="Space"){e.preventDefault();knit()}
+  if(e.code=="Backspace"){undo1();draw()}
+  if(e.key>="1"&&e.key<="4")yb.children[e.key-1].click()});
+function paint(e){const r=cv.getBoundingClientRect(),k=(cv.width/(window.devicePixelRatio||1))/r.width;
+  const x=(e.clientX-r.left)*k,y=(e.clientY-r.top)*k,rows=Math.max(1,Math.ceil(n/W));
+  const c=Math.floor((x-MX)/CW),rr=rows-1-Math.floor((y-TOP)/CH);
+  if(c>=0&&c<W&&rr>=0&&rr*W+(serp&&rr%2?W-1-c:c)<n){cells[rr*W+c]=type==3?null:{t:type,c:cur};draw()}}
+cv.addEventListener("pointerdown",e=>{down=true;paint(e)});
+cv.addEventListener("pointermove",e=>{if(down&&e.pointerType=="mouse")paint(e)});
+addEventListener("pointerup",()=>down=false);
+draw();
+</script>
+</body>
+</html>
